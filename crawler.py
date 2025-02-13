@@ -75,12 +75,35 @@ class DocumentCrawler:
 
     def clean_text(self, text: str) -> str:
         """清理文本内容"""
+        # 替换特殊字符
+        special_chars = {
+            'Â': '',
+            '¶': '',
+            'â': '"',
+            '"': '"',
+            '"': '"',
+            ''': "'",
+            ''': "'",
+            '…': '...',
+            '–': '-',
+            '—': '-',
+            '•': '*',
+            '\u200b': '',  # 零宽空格
+            '\u200e': '',  # 从左到右标记
+            '\u200f': '',  # 从右到左标记
+            '\u2028': '\n',  # 行分隔符
+            '\u2029': '\n\n',  # 段落分隔符
+            '\ufeff': ''  # 零宽不换行空格
+        }
+        for char, replacement in special_chars.items():
+            text = text.replace(char, replacement)
+            
         # 移除多余的空白字符
         text = re.sub(r'\s+', ' ', text)
         # 移除空行
         text = re.sub(r'\n\s*\n', '\n', text)
-        # 移除特殊字符
-        text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9.,!?，。！？、:：()（）\s]', '', text)
+        # 移除其他特殊字符，但保留基本标点和中文字符
+        text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9.,!?，。！？、:：()（）\s\-_*"\']', '', text)
         # 移除重复的标点符号
         text = re.sub(r'([.,!?，。！？、])\1+', r'\1', text)
         return text.strip()
@@ -138,17 +161,32 @@ class DocumentCrawler:
             soup = BeautifulSoup(response.text, 'html.parser')
             self.clean_html(soup)
             
-            # 提取正文内容
-            content_elements = soup.find_all(['article', 'main', 'div', 'section'])
-            if not content_elements:
-                content_elements = soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+            # 提取结构化内容
+            content = []
             
-            content = ' '.join([elem.get_text() for elem in content_elements])
-            content = self.clean_text(content)
+            # 提取标题
+            title = soup.find('title')
+            if title:
+                content.append(('h1', title.get_text().strip()))
+            
+            # 提取所有标题和段落
+            for elem in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'article', 'section']):
+                if elem.name.startswith('h'):
+                    text = elem.get_text().strip()
+                    if text:
+                        content.append((elem.name, text))
+                else:
+                    # 处理段落内容
+                    text = elem.get_text().strip()
+                    if text:
+                        content.append(('p', text))
+            
+            # 将结构化内容转换为特殊格式的字符串
+            structured_content = '\n'.join([f"<{tag}>{text}</{tag}>" for tag, text in content])
             
             # 检查内容是否重复
-            if content and not self.is_duplicate_content(content):
-                self.documents[url] = content
+            if structured_content and not self.is_duplicate_content(structured_content):
+                self.documents[url] = structured_content
 
             # 提取链接并继续爬取
             if depth < self.max_depth:

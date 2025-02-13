@@ -4,6 +4,8 @@ import os
 from datetime import datetime
 import argparse
 import hashlib
+from urllib.parse import urlparse
+import re
 
 def save_documents(documents, output_dir="output"):
     """保存爬取的文档"""
@@ -28,12 +30,40 @@ def save_documents(documents, output_dir="output"):
         f.write(f"- **文档总数**: {len(sorted_documents)}\n")
         f.write(f"- **知识库ID**: {hashlib.md5(timestamp.encode()).hexdigest()}\n\n")
         
-        # 写入目录
+        # 写入目录，使用文档的第一个标题作为标题
         f.write("## 文档目录\n\n")
+        seen_titles = set()
+        
+        # 首先提取所有文档的标题
+        doc_titles = {}
+        for url, content in sorted_documents.items():
+            elements = re.findall(r'<(\w+)>(.*?)</\w+>', content)
+            first_title = None
+            for tag, text in elements:
+                if tag == 'h1' and text.strip():
+                    first_title = text.split('-')[0].strip()  # 移除" - SiliconFlow"部分
+                    break
+            if not first_title:
+                # 如果没有找到标题，使用URL的最后一部分
+                parsed_url = urlparse(url)
+                path_parts = parsed_url.path.split('/')
+                first_title = path_parts[-1] if path_parts[-1] else parsed_url.netloc
+            doc_titles[url] = first_title
+        
+        # 写入目录
         for i, url in enumerate(sorted_documents.keys(), 1):
             # 生成锚点链接
             anchor = f"doc-{i}"
-            title = url.split('/')[-1] or url
+            title = doc_titles[url]
+            
+            # 如果标题已存在，添加计数
+            base_title = title
+            counter = 1
+            while title in seen_titles:
+                counter += 1
+                title = f"{base_title} ({counter})"
+            seen_titles.add(title)
+            
             f.write(f"{i}. [{title}](#{anchor})\n")
         f.write("\n---\n\n")
         
@@ -50,16 +80,36 @@ def save_documents(documents, output_dir="output"):
             f.write(f"- **字数统计**: {len(content)}\n")
             f.write(f"- **抓取时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             
-            # 文档内容，使用引用格式并添加段落编号
+            # 解析和格式化结构化内容
             f.write("### 文档内容\n\n")
-            paragraphs = content.split('\n\n')
-            for p_idx, para in enumerate(paragraphs, 1):
-                if para.strip():
-                    # 添加段落编号和引用符号
-                    f.write(f"#### 段落 {p_idx}\n\n")
-                    formatted_para = '\n'.join([f'> {line}' if line.strip() else '>' 
-                                              for line in para.split('\n')])
-                    f.write(f"{formatted_para}\n\n")
+            
+            # 解析XML样式的标签
+            elements = re.findall(r'<(\w+)>(.*?)</\w+>', content)
+            
+            for tag, text in elements:
+                if not text.strip():
+                    continue
+                    
+                # 根据标签类型设置合适的Markdown格式
+                if tag == 'h1':
+                    f.write(f"# {text}\n\n")
+                elif tag == 'h2':
+                    f.write(f"## {text}\n\n")
+                elif tag == 'h3':
+                    f.write(f"### {text}\n\n")
+                elif tag == 'h4':
+                    f.write(f"#### {text}\n\n")
+                elif tag == 'h5':
+                    f.write(f"##### {text}\n\n")
+                elif tag == 'h6':
+                    f.write(f"###### {text}\n\n")
+                elif tag == 'p':
+                    # 分段落显示，每段都用引用格式
+                    lines = text.split('\n')
+                    for line in lines:
+                        if line.strip():
+                            f.write(f"> {line}\n")
+                    f.write("\n")
             
             f.write("---\n\n")
     
